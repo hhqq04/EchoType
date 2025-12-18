@@ -1,0 +1,151 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+#include <string.h>
+
+#define MAX_INPUT_SIZE 10000    // 最大输入字符数
+#define MAX_SIMULATION_COUNT 30 // 最大重复模拟次数
+
+// 发送单个 Unicode 字符
+void sendUnicodeChar(WCHAR ch) {
+    INPUT input[2] = {0};
+    
+    // 1. 模拟按下按键
+    input[0].type = INPUT_KEYBOARD;
+    input[0].ki.wVk = 0;
+    input[0].ki.wScan = ch;
+    input[0].ki.dwFlags = KEYEVENTF_UNICODE;
+    
+    // 2. 模拟释放按键
+    input[1].type = INPUT_KEYBOARD;
+    input[1].ki.wVk = 0;
+    input[1].ki.wScan = ch;
+    input[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+    
+    SendInput(2, input, sizeof(INPUT));
+}
+
+// 模拟回车键 (Enter)
+void simulateEnterKey() {
+    INPUT input[2] = {0};
+    
+    // 按下回车
+    input[0].type = INPUT_KEYBOARD;
+    input[0].ki.wVk = VK_RETURN;
+    
+    // 释放回车
+    input[1].type = INPUT_KEYBOARD;
+    input[1].ki.wVk = VK_RETURN;
+    input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    
+    SendInput(2, input, sizeof(INPUT));
+}
+
+// 字符编码转换：GBK -> Unicode (Windows宽字符)
+WCHAR* gbkToUnicode(const char* gbkStr, int* unicodeLen) {
+    // 第一次调用计算所需缓冲区大小
+    int len = MultiByteToWideChar(936, 0, gbkStr, -1, NULL, 0);
+    if (len == 0) {
+        *unicodeLen = 0;
+        return NULL;
+    }
+    
+    // 分配内存
+    WCHAR* unicodeStr = (WCHAR*)malloc(len * sizeof(WCHAR));
+    if (unicodeStr == NULL) {
+        *unicodeLen = 0;
+        return NULL;
+    }
+    
+    // 第二次调用进行实际转换
+    MultiByteToWideChar(936, 0, gbkStr, -1, unicodeStr, len);
+    *unicodeLen = len - 1; // 减去字符串结束符 \0 的长度
+    
+    return unicodeStr;
+}
+
+int main() {
+    // 设置控制台编码为 GBK，防止中文乱码
+    system("chcp 936 > nul");
+    
+    int simulationCount = 0;
+    
+    printf("===============================================\n");
+    printf("           Auto Keyboard Simulator\n");
+    printf("           自动键盘输入模拟器\n");
+    printf("===============================================\n");
+    
+    while (simulationCount < MAX_SIMULATION_COUNT) {
+        char input[MAX_INPUT_SIZE];
+        int ch;
+        int index = 0;
+        
+        printf("任务 %d/%d - 请粘贴或输入文本 (输入完毕后按 Ctrl+Z 再按回车确认):\n", 
+               simulationCount + 1, MAX_SIMULATION_COUNT);
+        
+        // 读取输入直到遇到 EOF (Ctrl+Z)
+        while ((ch = getchar()) != EOF && index < MAX_INPUT_SIZE - 1) {
+            input[index++] = (char)ch;
+        }
+        
+        // 处理空输入直接退出的情况
+        if (index == 0 && ch == EOF) {
+            break;
+        }
+        
+        input[index] = '\0'; // 添加结束符
+        
+        printf("\n文本已捕获。\n");
+        printf(">>> 请将鼠标点击目标输入框，然后按下 [回车键(Enter)] 开始打字...\n");
+        
+        // --- 按键检测逻辑 ---
+        
+        // 1. 等待回车键被按下
+        while(GetAsyncKeyState(VK_RETURN) & 0x8000) {
+            Sleep(10); // 如果回车键一直是按下的状态，等待它释放（防误触）
+        }
+
+        // 2. 循环检测回车键是否被再次按下
+        while (1) {
+            if (GetAsyncKeyState(VK_RETURN) & 0x8000) {
+                break; // 检测到按下，跳出循环
+            }
+            Sleep(10); // 减少CPU占用
+        }
+        
+        // 3. 启动前缓冲 (给系统一点反应时间)
+        Sleep(200); 
+
+        // --- 开始模拟输入 ---
+        int unicodeLen;
+        WCHAR* unicodeStr = gbkToUnicode(input, &unicodeLen);
+        
+        if (unicodeStr != NULL) {
+            for (int i = 0; i < unicodeLen; i++) {
+                if (unicodeStr[i] == L'\n') {
+                    simulateEnterKey(); // 遇到换行符模拟回车
+                } else {
+                    sendUnicodeChar(unicodeStr[i]); // 发送普通字符
+                }
+                // --- 打字速度控制 ---
+                Sleep(2); // 每个字符间隔 2毫秒
+            }
+            
+            free(unicodeStr); // 释放内存
+            printf("\n输入完成!\n\n");
+        }
+        
+        simulationCount++;
+        
+        // 达到最大次数退出
+        if (simulationCount >= MAX_SIMULATION_COUNT) {
+            break;
+        }
+        
+        // 清理输入缓冲区，准备下一次输入
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
+    }
+    
+    return 0;
+}
